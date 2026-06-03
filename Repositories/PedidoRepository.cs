@@ -6,6 +6,15 @@ namespace Figuritas.Api.Repositories;
 
 public sealed class PedidoRepository(IConfiguration configuration) : IPedidoRepository
 {
+    private const string GetStickerStockQuery = """
+        SELECT `disponible`,
+               `habilitado`
+        FROM `stickers`
+        WHERE `id_album` = @IdAlbum
+          AND `sku` = @Sku
+        FOR UPDATE;
+        """;
+
     private const string InsertPedidoQuery = """
         INSERT INTO `pedidos`
                (`nombre`, `numero_telefono`, `comentario`, `estado`)
@@ -44,6 +53,15 @@ public sealed class PedidoRepository(IConfiguration configuration) : IPedidoRepo
 
         try
         {
+            foreach (var sticker in request.Stickers)
+            {
+                await ValidateStickerStockAsync(
+                    connection,
+                    transaction,
+                    sticker,
+                    cancellationToken);
+            }
+
             var pedidoId = await InsertPedidoAsync(
                 connection,
                 transaction,
@@ -87,8 +105,44 @@ public sealed class PedidoRepository(IConfiguration configuration) : IPedidoRepo
         if (duplicatedSticker is not null)
         {
             throw new InvalidPedidoException(
-                $"Sticker '{duplicatedSticker.Key.Sku}' from album " +
-                $"'{duplicatedSticker.Key.AlbumId}' was included more than once.");
+                $"El sticker '{duplicatedSticker.Key.Sku}' del album " +
+                $"'{duplicatedSticker.Key.AlbumId}' esta repetido en el pedido.");
+        }
+    }
+
+    private static async Task ValidateStickerStockAsync(
+        MySqlConnection connection,
+        MySqlTransaction transaction,
+        CreatePedidoStickerRequest sticker,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new MySqlCommand(GetStickerStockQuery, connection, transaction);
+        command.Parameters.Add("@IdAlbum", MySqlDbType.Int32).Value = sticker.AlbumId;
+        command.Parameters.Add("@Sku", MySqlDbType.VarChar, 50).Value = sticker.Sku.Trim();
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            throw new InvalidPedidoException(
+                $"El sticker '{sticker.Sku}' del album '{sticker.AlbumId}' no existe.");
+        }
+
+        var habilitado = Convert.ToBoolean(reader["habilitado"]);
+
+        if (!habilitado)
+        {
+            throw new InvalidPedidoException(
+                $"El sticker '{sticker.Sku}' del album '{sticker.AlbumId}' no esta habilitado.");
+        }
+
+        var disponible = Convert.ToInt32(reader["disponible"]);
+
+        if (disponible < sticker.Cantidad)
+        {
+            throw new InvalidPedidoException(
+                $"El sticker '{sticker.Sku}' del album '{sticker.AlbumId}' no tiene stock suficiente. " +
+                $"Disponible: {disponible}. Solicitado: {sticker.Cantidad}.");
         }
     }
 
@@ -128,8 +182,8 @@ public sealed class PedidoRepository(IConfiguration configuration) : IPedidoRepo
         if (updatedRows == 0)
         {
             throw new InvalidPedidoException(
-                $"Sticker '{sticker.Sku}' from album '{sticker.AlbumId}' does not exist, " +
-                "is disabled or does not have enough stock.");
+                $"No se pudo actualizar el stock del sticker '{sticker.Sku}' " +
+                $"del album '{sticker.AlbumId}'.");
         }
     }
 

@@ -53,8 +53,9 @@ POST /api/pedidos
 Content-Type: application/json
 ```
 
-Registra un pedido con sus stickers, descuenta el stock disponible y devuelve
-el numero de pedido generado.
+Valida que todos los stickers existan, esten habilitados y tengan stock
+suficiente. Si la validacion pasa, registra el pedido, descuenta el stock
+disponible y devuelve el numero de pedido generado.
 
 Ejemplo:
 
@@ -82,4 +83,5 @@ Respuesta:
 ```
 
 El endpoint de pedidos valida datos obligatorios, limita el tamano del request
-y aplica rate limiting para reducir abuso.
+y aplica rate limiting para reducir abuso. Si algun sticker no puede venderse,
+responde `400 Bad Request` con un mensaje indicando el SKU y el problema.
